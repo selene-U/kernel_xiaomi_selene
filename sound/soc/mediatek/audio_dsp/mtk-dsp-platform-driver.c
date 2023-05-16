@@ -476,6 +476,23 @@ static int dsp_capture_raw_runtime_get(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int dsp_fm_runtime_set(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	int val = ucontrol->value.integer.value[0];
+
+	set_task_attr(AUDIO_TASK_FM_ADSP_ID, ADSP_TASK_ATTR_RUMTIME, val);
+	return 0;
+}
+
+static int dsp_fm_runtime_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] =
+		get_task_attr(AUDIO_TASK_FM_ADSP_ID, ADSP_TASK_ATTR_RUMTIME);
+	return 0;
+}
+
 static int dsp_captureul1_ref_runtime_set(struct snd_kcontrol *kcontrol,
 					  struct snd_ctl_elem_value *ucontrol)
 {
@@ -1123,7 +1140,15 @@ static int mtk_dsp_pcm_hw_params(struct snd_pcm_substream *substream,
 	int id = rtd->cpu_dai->id;
 	void *ipi_audio_buf; /* dsp <-> audio data struct*/
 	int ret = 0;
-	struct mtk_base_dsp_mem *dsp_memif = &dsp->dsp_mem[id];
+	struct mtk_base_dsp_mem *dsp_memif;
+
+	if (id < 0 || id >= AUDIO_TASK_DAI_NUM) {
+		pr_info("%s id = %d, is overrange\n", __func__, id);
+		return -1;
+	}
+
+	dsp_memif = &dsp->dsp_mem[id];
+	pr_info("%s(), task_id: %d\n", __func__, id);
 
 	reset_audiobuffer_hw(&dsp->dsp_mem[id].adsp_buf);
 	reset_audiobuffer_hw(&dsp->dsp_mem[id].audio_afepcm_buf);
@@ -1521,6 +1546,9 @@ void audio_irq_handler(int irq, void *data, int core_id)
 		pr_info("%s get semaphore fail\n", __func__);
 	pdtoa = (unsigned long *)
 		&dsp->core_share_mem.ap_adsp_core_mem[core_id]->dtoa_flag;
+
+	release_adsp_semaphore(SEMA_AUDIO);
+
 	loop_count = DSP_IRQ_LOOP_COUNT;
 	/* read dram data need mb()  */
 	mb();
@@ -1542,7 +1570,7 @@ void audio_irq_handler(int irq, void *data, int core_id)
 		}
 		loop_count--;
 	} while (*pdtoa && task_value && loop_count > 0);
-	release_adsp_semaphore(SEMA_AUDIO);
+
 	return;
 IRQ_ERROR:
 	pr_info("IRQ_ERROR irq[%d] data[%p] core_id[%d] dsp[%p]\n",
