@@ -1436,8 +1436,12 @@ void disp_aal_notify_backlight_changed(int bl_1024)
 
 	disp_aal_exit_idle(__func__, 1);
 
+#ifdef CONFIG_BACKLIGHT_SUPPORT_2047_FEATURE
+	max_backlight = 2047;
+#else
 	max_backlight = disp_pwm_get_max_backlight(DISP_PWM0);
 	printk("[%s]: lyd_thmal, max_backlight = %d\n", __func__, max_backlight);
+#endif
 	if (bl_1024 > max_backlight)
 		bl_1024 = max_backlight;
 
