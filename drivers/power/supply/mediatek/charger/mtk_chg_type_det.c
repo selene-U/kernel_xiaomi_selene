@@ -292,7 +292,7 @@ static int mt_charger_set_property(struct power_supply *psy,
 	dump_charger_name(mtk_chg->chg_type);
 
 	cti = mtk_chg->cti;
-	if (!cti->ignore_usb) {
+	if ((cti != NULL) && !cti->ignore_usb) {
 		/* usb */
 		if ((mtk_chg->chg_type == STANDARD_HOST) ||
 			(mtk_chg->chg_type == CHARGING_HOST) ||
@@ -303,7 +303,9 @@ static int mt_charger_set_property(struct power_supply *psy,
 			mt_usb_disconnect();
 	}
 
-	queue_work(cti->chg_in_wq, &cti->chg_in_work);
+	if(cti != NULL){
+		queue_work(cti->chg_in_wq, &cti->chg_in_work);
+	}
 
 	power_supply_changed(mtk_chg->usb_psy);
 	power_supply_changed(mtk_chg->ac_psy);
@@ -325,7 +327,8 @@ static int mt_ac_get_property(struct power_supply *psy,
 		/* Reset to 0 if charger type is USB */
 		if ((mtk_chg->chg_type == STANDARD_HOST) ||
 			(mtk_chg->chg_type == CHARGING_HOST))
-			val->intval = 0;
+			val->intval = 1;
+
 		break;
 	default:
 		return -EINVAL;
