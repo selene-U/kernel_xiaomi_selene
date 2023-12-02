@@ -52,8 +52,6 @@ struct pinctrl_state *eint_as_int, *eint_output0,
 const struct of_device_id touch_of_match[] = {
 	{ .compatible = "mediatek,touch", },
 	{ .compatible = "mediatek,mt8167-touch", },
-	{ .compatible = "mediatek,touch-himax", },
-	{ .compatible = "goodix,touch", },
 	{},
 };
 
@@ -194,13 +192,11 @@ int tpd_get_gpio_info(struct platform_device *pdev)
 		dev_info(&pdev->dev, "fwq Cannot find pinctrl1!\n");
 		return ret;
 	}
-#ifndef CONFIG_TOUCHSCREEN_HIMAX_CHIPSET_8789P1_8185P3
 	pins_default = pinctrl_lookup_state(pinctrl1, "default");
 	if (IS_ERR(pins_default)) {
 		ret = PTR_ERR(pins_default);
 		TPD_DMESG("Cannot find pinctrl default %d!\n", ret);
 	}
-#endif
 	eint_as_int = pinctrl_lookup_state(pinctrl1, "state_eint_as_int");
 	if (IS_ERR(eint_as_int)) {
 		ret = PTR_ERR(eint_as_int);
@@ -434,15 +430,15 @@ static int tpd_fb_notifier_callback(
 
 	evdata = data;
 	/* If we aren't interested in this event, skip it immediately ... */
-	if (event != FB_EVENT_BLANK)
-		return 0;
+//	if (event != FB_EVENT_BLANK)
+//		return 0;
 
 	blank = *(int *)evdata->data;
 	TPD_DMESG("fb_notify(blank=%d)\n", blank);
 	switch (blank) {
 	case FB_BLANK_UNBLANK:
 		TPD_DMESG("LCD ON Notify\n");
-		if (g_tpd_drv && tpd_suspend_flag) {
+		if (g_tpd_drv && tpd_suspend_flag && (event == FB_EVENT_BLANK)) {
 			err = queue_work(touch_resume_workqueue,
 						&touch_resume_work);
 			if (!err) {
@@ -453,7 +449,7 @@ static int tpd_fb_notifier_callback(
 		break;
 	case FB_BLANK_POWERDOWN:
 		TPD_DMESG("LCD OFF Notify\n");
-		if (g_tpd_drv && !tpd_suspend_flag) {
+		if (g_tpd_drv && !tpd_suspend_flag && (event == FB_EARLY_EVENT_BLANK)) {
 			err = cancel_work_sync(&touch_resume_work);
 			if (!err)
 				TPD_DMESG("cancel resume_workqueue failed\n");
@@ -470,7 +466,7 @@ static int tpd_fb_notifier_callback(
 int tpd_driver_add(struct tpd_driver_t *tpd_drv)
 {
 	int i;
-
+		TPD_DMESG("touch driver tpd_driver_add\n");
 	if (g_tpd_drv != NULL) {
 		TPD_DMESG("touch driver exist\n");
 		return -1;
@@ -551,7 +547,6 @@ static int tpd_probe(struct platform_device *pdev)
 #endif
 
 	TPD_DMESG("enter %s, %d\n", __func__, __LINE__);
-	pr_info("enter %s, %d\n", __func__, __LINE__);
 
 	if (misc_register(&tpd_misc_device))
 		pr_info("mtk_tpd: tpd_misc_device register failed\n");
@@ -645,7 +640,8 @@ static int tpd_probe(struct platform_device *pdev)
 		/* add tpd driver into list */
 		if (tpd_driver_list[i].tpd_device_name != NULL) {
 			tpd_driver_list[i].tpd_local_init();
-			/* msleep(1); */
+			TPD_DMESG("%s, tpd_driver_name=%s\n", __func__, tpd_driver_list[i].tpd_device_name);
+			/*msleep(10);*/
 			if (tpd_load_status == 1) {
 				TPD_DMESG("%s, tpd_driver_name=%s\n", __func__,
 					  tpd_driver_list[i].tpd_device_name);
@@ -738,7 +734,7 @@ static void tpd_init_work_callback(struct work_struct *work)
 static int __init tpd_device_init(void)
 {
 	int res = 0;
-	pr_info("[%s-%s-%d]\n", __FILE__, __func__, __LINE__);
+
 	tpd_init_workqueue = create_singlethread_workqueue("mtk-tpd");
 	INIT_WORK(&tpd_init_work, tpd_init_work_callback);
 

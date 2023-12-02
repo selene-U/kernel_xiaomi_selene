@@ -67,7 +67,8 @@
 #undef TPD_RES_Y
 extern unsigned long TPD_RES_X;
 extern unsigned long TPD_RES_Y;
-extern int tpd_load_status;	/* 0: failed, 1: success */
+extern int tpd_load_status;
+extern int tpd_init_status;	/* 0: failed, 1: success */
 extern int tpd_mode;
 extern int tpd_mode_axis;
 extern int tpd_mode_min;
@@ -161,13 +162,8 @@ extern int tpd_em_spl_num;
 extern int tpd_em_pressure_threshold;
 extern struct tpd_device *tpd;
 extern void tpd_get_dts_info(void);
-#ifdef CONFIG_TOUCHSCREEN_HIMAX_CHIPSET_8789P1_8185P3
-#define GTP_RST_PORT    2
-#define GTP_INT_PORT    1
-#else
 #define GTP_RST_PORT    0
 #define GTP_INT_PORT    1
-#endif
 extern void tpd_gpio_as_int(int pin);
 extern void tpd_gpio_output(int pin, int level);
 extern const struct of_device_id touch_of_match[];
