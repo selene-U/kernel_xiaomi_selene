@@ -34,8 +34,6 @@
 #include "ddp_mmp.h"
 #include "primary_display.h"
 #include "mtk_disp_mgr.h"
-#include "ion_priv.h"
-#include "mtk_ion.h"
 /************************* log*********************/
 
 static bool mtkfb_fence_on;
@@ -335,7 +333,7 @@ static void mtkfb_ion_init(void)
  * @return ion handle
  */
 static struct ion_handle *mtkfb_ion_import_handle(struct ion_client *client,
-						int fd, int *type)
+	int fd)
 {
 	struct ion_handle *handle = NULL;
 	struct ion_mm_data mm_data;
@@ -359,20 +357,18 @@ static struct ion_handle *mtkfb_ion_import_handle(struct ion_client *client,
 		pr_info("import ion handle failed!\n");
 		return NULL;
 	}
-	*type = handle->buffer->heap->type;
-	if (*type != ION_HEAP_TYPE_MULTIMEDIA) {
-		mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
-		mm_data.config_buffer_param.kernel_handle = handle;
-		mm_data.config_buffer_param.module_id = 0;
-		mm_data.config_buffer_param.security = 0;
-		mm_data.config_buffer_param.coherent = 0;
+	mm_data.mm_cmd = ION_MM_CONFIG_BUFFER;
+	mm_data.config_buffer_param.kernel_handle = handle;
+	mm_data.config_buffer_param.module_id = 0;
+	mm_data.config_buffer_param.security = 0;
+	mm_data.config_buffer_param.coherent = 0;
 
-		if (ion_kernel_ioctl(ion_client, ION_CMD_MULTIMEDIA,
-					 (unsigned long)&mm_data))
-			pr_info("configure ion buffer failed!\n");
-	}
-	MTKFB_FENCE_LOG("import ion handle fd=%d,hnd=0x%p type=%d\n",
-		fd, handle, *type);
+	if (ion_kernel_ioctl(ion_client, ION_CMD_MULTIMEDIA,
+		(unsigned long)&mm_data))
+		pr_info("configure ion buffer failed!\n");
+
+	MTKFB_FENCE_LOG("import ion handle fd=%d,hnd=0x%p\n",
+		fd, handle);
 
 	return handle;
 }
@@ -393,11 +389,10 @@ static void mtkfb_ion_free_handle(struct ion_client *client,
 }
 
 static size_t mtkfb_ion_phys_mmu_addr(struct ion_client *client,
-	struct ion_handle *handle, unsigned int *mva, int type)
+	struct ion_handle *handle, unsigned int *mva)
 {
-	size_t size = 0;
+	size_t size;
 	ion_phys_addr_t phy_addr = 0;
-	struct ion_mm_data mm_data;
 
 	if (!ion_client) {
 		pr_info("invalid ion client!\n");
@@ -405,23 +400,6 @@ static size_t mtkfb_ion_phys_mmu_addr(struct ion_client *client,
 	}
 	if (!handle)
 		return 0;
-
-	if (type == ION_HEAP_TYPE_MULTIMEDIA) {
-		/* use get_iova replace config_buffer & get_phys*/
-		memset((void *)&mm_data, 0, sizeof(mm_data));
-		mm_data.mm_cmd = ION_MM_GET_IOVA;
-		mm_data.get_phys_param.kernel_handle = handle;
-		mm_data.get_phys_param.module_id = 0;
-
-		if (ion_kernel_ioctl(ion_client, ION_CMD_MULTIMEDIA,
-			(unsigned long)&mm_data))
-			pr_info("configure ion buffer failed!\n");
-
-		*mva = (unsigned int)mm_data.get_phys_param.phy_addr;
-		MTKFB_FENCE_LOG("alloc mmu addr hnd=0x%p,mva=0x%08x mm\n",
-			handle, (unsigned int)*mva);
-		return (size_t)mm_data.get_phys_param.len;
-	}
 
 	ion_phys(client, handle, &phy_addr, &size);
 	*mva = (unsigned int)phy_addr;
@@ -1205,13 +1183,12 @@ static int prepare_ion_buf(struct disp_buffer_info *buf,
 {
 	unsigned int mva = 0x0;
 	struct ion_handle *handle = NULL;
-	int type = 0;
 
 #if defined(MTK_FB_ION_SUPPORT)
-	handle = mtkfb_ion_import_handle(ion_client, buf->ion_fd, &type);
+	handle = mtkfb_ion_import_handle(ion_client, buf->ion_fd);
 	if (handle)
 		buf_info->size =
-			mtkfb_ion_phys_mmu_addr(ion_client, handle, &mva, type);
+			mtkfb_ion_phys_mmu_addr(ion_client, handle, &mva);
 	else
 		DISPERR("can't import ion handle for fd:%d\n",
 			buf->ion_fd);
@@ -1537,31 +1514,3 @@ int disp_sync_get_debug_info(char *stringbuf, int buf_len)
 
 	return len;
 }
-
-struct ion_handle *disp_snyc_get_ion_handle(unsigned int session_id,
-	unsigned int timeline_id, unsigned int idx)
-{
-	struct mtkfb_fence_buf_info *buf = NULL;
-	struct disp_sync_info *layer_info = NULL;
-	struct ion_handle *handle = NULL;
-
-	layer_info = _get_sync_info(session_id, timeline_id);
-	if (layer_info == NULL) {
-		DISPERR("layer_info is null, layer_info=%p\n", layer_info);
-		return 0;
-	}
-
-	mutex_lock(&layer_info->sync_lock);
-	list_for_each_entry(buf, &layer_info->buf_list, list) {
-		if (buf->idx == idx) {
-			/* use local variable here to avoid polluted pointer */
-			handle = buf->hnd;
-			DISPMSG("%s, get handle", __func__);
-			break;
-		}
-	}
-	mutex_unlock(&layer_info->sync_lock);
-
-	return handle;
-}
-

@@ -197,8 +197,7 @@ void DSI_Set_LFR(enum DISP_MODULE_ENUM module, struct cmdqRecStruct *cmdq,
 	unsigned int mode, unsigned int type, unsigned int enable,
 	unsigned int skip_num);
 enum DSI_STATUS DSI_BIST_Pattern_Test(enum DISP_MODULE_ENUM module,
-				      struct cmdqRecStruct *cmdq, bool enable,
-				      unsigned int color);
+	struct cmdqRecStruct *cmdq,	bool enable, unsigned int color);
 int ddp_dsi_start(enum DISP_MODULE_ENUM module, void *cmdq);
 enum DSI_STATUS DSI_DumpRegisters(enum DISP_MODULE_ENUM module, int level);
 void DSI_ForceConfig(int forceconfig);
@@ -206,8 +205,8 @@ int DSI_set_roi(int x, int y);
 int DSI_check_roi(void);
 int ddp_dsi_trigger(enum DISP_MODULE_ENUM module, void *cmdq);
 void DSI_set_cmdq_V2(enum DISP_MODULE_ENUM module, struct cmdqRecStruct *cmdq,
-		    unsigned int cmd, unsigned char count,
-		    unsigned char *para_list, unsigned char force_update);
+	unsigned int cmd, unsigned char count, unsigned char *para_list,
+	unsigned char force_update);
 void DSI_send_cmdq_to_bdg(enum DISP_MODULE_ENUM module, struct cmdqRecStruct *cmdq,
 		    unsigned int cmd, unsigned char count,
 		    unsigned char *para_list, unsigned char force_update);
@@ -255,7 +254,8 @@ void DSI_dynfps_send_cmd(
 
 /*-------------------------------DynFPS end------------------------------*/
 #endif
+
 #ifdef __cplusplus
 }
 #endif
-#endif /* __DSI_DRV_H__ */
+#endif				/* __DPI_DRV_H__ */

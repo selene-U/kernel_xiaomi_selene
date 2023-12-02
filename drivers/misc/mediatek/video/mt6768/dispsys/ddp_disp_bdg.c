@@ -54,7 +54,9 @@ struct DSI_TX_PHY_TIMCON2_REG timcon2;
 struct DSI_TX_PHY_TIMCON3_REG timcon3;
 unsigned int bg_tx_data_phy_cycle = 0, tx_data_rate = 0, ap_tx_data_rate = 0;
 //unsigned int ap_tx_data_phy_cycle = 0;
-unsigned int hsa_byte = 0, hbp_byte = 0, hfp_byte = 0, bllp_byte = 0, bg_tx_line_cycle = 0;
+/* Huaqin modify for HQ-146521 by caogaojie at 2021/08/02 start */
+int hsa_byte = 0, hbp_byte = 0, hfp_byte = 0, bllp_byte = 0, bg_tx_line_cycle = 0;
+/* Huaqin modify for HQ-146521 by caogaojie at 2021/08/02 end */
 //unsigned int ap_tx_hsa_wc = 0, ap_tx_hbp_wc = 0, ap_tx_hfp_wc = 0, ap_tx_bllp_wc = 0;
 unsigned int dsc_en;
 unsigned int mt6382_init;
@@ -62,7 +64,6 @@ unsigned int bdg_tx_mode;
 static int bdg_eint_irq;
 static int mt6382_connected;
 static bool irq_already_requested;
-static int bdg_mipi_hopping;
 
 #define T_DCO		5  // nominal: 200MHz
 int hsrx_clk_div;
@@ -94,8 +95,22 @@ struct lcm_setting_table {
 	unsigned char count;
 	unsigned char para_list[256];
 };
-
-#define MM_CLK			270 //fpga=26
+/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 start */
+int mtk_mm_clk = 0;
+int mtk_rxtx_ratio = 0;
+extern char *saved_command_line;
+int mtk_panel_compare()
+{
+    if (strstr(saved_command_line, "dsi_panel_k19a_43_02_0b_dsc_vdo_lcm_drv")) {
+        mtk_mm_clk = 405;
+        mtk_rxtx_ratio = 232;
+    } else {
+	mtk_mm_clk = 270;
+        mtk_rxtx_ratio = 225;
+    }
+    return 0;
+}
+/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 end */
 #define NS_TO_CYCLE(n, c)	((n) / (c) + (((n) % (c)) ? 1 : 0))
 
 #define DSI_MODULE_to_ID(x)	(x == DISP_BDG_DSI0 ? 0 : 1)
@@ -142,10 +157,7 @@ int mtk_spi_mask_write(u32 addr, u32 msk, u32 value)
 		if ((msk & temp) == temp)
 			break;
 	}
-	if (i == 32)
-		value = 0;
-	else
-		value = value << i;
+	value = value << i;
 //	DISPMSG("mt6382, %s, i=%02d, temp=0x%08x, addr=0x%08x, msk=0x%08x, value=0x%x\n",
 //		__func__, i, temp, addr, msk, value);
 #ifdef SW_EARLY_PORTING
@@ -165,10 +177,7 @@ int mtk_spi_mask_field_write(u32 addr, u32 msk, u32 value)
 		if ((msk & temp) == temp)
 			break;
 	}
-	if (i == 32)
-		value = 0;
-	else
-		value = value << i;
+	value = value << i;
 //	DISPMSG("mt6382, %s, i=%02d, temp=0x%08x, addr=0x%08x, msk=0x%08x, value=0x%x\n",
 //		__func__, i, temp, addr, msk, value);
 #ifdef SW_EARLY_PORTING
@@ -245,21 +254,21 @@ do { \
 int bdg_is_bdg_connected(void)
 {
 	if (mt6382_connected == 0) {
-#ifdef CONFIG_MTK_MT6382_BDG
 		unsigned int ret = 0;
-
+#ifdef CONFIG_MTK_MT6382_BDG
 		spislv_init();
 		spislv_switch_speed_hz(SPI_TX_LOW_SPEED_HZ, SPI_RX_LOW_SPEED_HZ);
 		ret = mtk_spi_read(0x0);
+#endif
 
 		if (ret == 0)
 			mt6382_connected = -1;
 		else
 			mt6382_connected = 1;
-#else
-		mt6382_connected = -1;
-#endif
 	}
+
+	DISPMSG("%s, mt6382_connected=%d\n", __func__, mt6382_connected);
+
 	return mt6382_connected;
 }
 
@@ -536,24 +545,11 @@ void ana_macro_on(void *cmdq)
 	 * bit 16-17 is display mm clk 1(270m)/2(405m)/3(540m)
 	 * dsc_on:vact * hact * vrefresh * (vtotal / vact) * bubble_ratio
 	 */
-	switch (MM_CLK) {
-	case 546:
-		DISPMSG("%s, 6382 mmclk 546M\n", __func__);
-		reg = (3 << 24) | (3 << 16) | (1 << 8) | (1 << 0); //540M
-		break;
-	case 405:
-		DISPMSG("%s, 6382 mmclk 405M\n", __func__);
-		reg = (3 << 24) | (2 << 16) | (1 << 8) | (1 << 0); //405M for 120Hz
-		break;
-	case 270:
-		DISPMSG("%s, 6382 mmclk 270M\n", __func__);
-		reg = (3 << 24) | (1 << 16) | (1 << 8) | (1 << 0); //270M for 90Hz
-		break;
-	default:
-		DISPMSG("%s, 6382 mmclk default 546M\n", __func__);
-		reg = (3 << 24) | (3 << 16) | (1 << 8) | (1 << 0); //540M
-		break;
-	}
+#ifdef _90HZ_
+	reg = (3 << 24) | (1 << 16) | (1 << 8) | (1 << 0); //270M for 90Hz
+#else
+	reg = (3 << 24) | (2 << 16) | (1 << 8) | (1 << 0); //405M for 120Hz
+#endif
 
 	DSI_OUTREG32(cmdq, TOPCKGEN->CLK_CFG_0_SET, reg);
 	//config update
@@ -841,7 +837,7 @@ int bdg_mipi_tx_dphy_clk_setting(enum DISP_BDG_ENUM module,
 				 void *cmdq,
 				 struct LCM_DSI_PARAMS *dsi_params)
 {
-	unsigned int i = 0;
+	int i = 0;
 	unsigned int j = 0;
 	unsigned int data_Rate;
 //	unsigned int pll_clock;
@@ -928,90 +924,83 @@ int bdg_mipi_tx_dphy_clk_setting(enum DISP_BDG_ENUM module,
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_PHY0_SEL,
-					pad_mapping[(unsigned int)swap_base[
-					(unsigned int)MIPITX_PHY_LANE_0]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_0]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_PHY1AB_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_0]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_0]] + 1);
 
 			/* LANE_1 */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_PHY1_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_1]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_1]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL1_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL1,
 					MIPI_TX_PHY2BC_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_1]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_1]] + 1);
 
 			/* LANE_2 */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_PHY2_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_2]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_2]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_CPHY0BC_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_2]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_2]] + 1);
 
 			/* LANE_3 */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL1_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL1,
 					MIPI_TX_PHY3_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_3]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_3]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL1_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL1,
 					MIPI_TX_CPHYXXX_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_3]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_3]] + 1);
 
 			/* CK LANE */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_PHYC_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_CK]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_CK]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL0_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL0,
 					MIPI_TX_CPHY1CA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_CK]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_CK]] + 1);
 
 			/* LPRX SETTING */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL1_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL1,
 					MIPI_TX_LPRX0AB_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_RX]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_RX]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL1_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL1,
 					MIPI_TX_LPRX0BC_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_RX]]
-					+ 1);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_RX]] + 1);
 
 			/* HS_DATA SETTING */
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL2_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL2,
 					MIPI_TX_PHY2_HSDATA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_2]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_2]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL2_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL2,
 					MIPI_TX_PHY0_HSDATA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_0]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_0]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL2_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL2,
 					MIPI_TX_PHYC_HSDATA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_CK]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_CK]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL2_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL2,
 					MIPI_TX_PHY1_HSDATA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_1]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_1]]);
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_PHY_SEL3_REG,
 					MIPI_TX_REG->MIPI_TX_PHY_SEL3,
 					MIPI_TX_PHY3_HSDATA_SEL,
-					pad_mapping[(unsigned int)swap_base[MIPITX_PHY_LANE_3]]);
+					pad_mapping[swap_base[MIPITX_PHY_LANE_3]]);
 		} else {
 			DSI_OUTREGBIT(cmdq, struct MIPI_TX_CKMODE_EN_REG,
 					MIPI_TX_REG->MIPI_TX_CK_CKMODE_EN,
@@ -1153,9 +1142,9 @@ int bdg_mipi_tx_dphy_clk_setting(enum DISP_BDG_ENUM module,
 }
 
 int bdg_tx_phy_config(enum DISP_BDG_ENUM module,
-			void *cmdq, unsigned int tx_data_rate)
+			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-	unsigned int i;
+	int i;
 	u32 ui, cycle_time;
 	unsigned int hs_trail;
 //	unsigned char timcon_temp;
@@ -1189,9 +1178,11 @@ int bdg_tx_phy_config(enum DISP_BDG_ENUM module,
 
 	/* hs_trail > max(8*UI, 60ns+4*UI) (spec) */
 	/* hs_trail = 80ns+4*UI */
-	hs_trail = 80 + 4 * ui;
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 start*/
+	hs_trail = 76 + 4 * ui;
 	timcon0.HS_TRAIL = (hs_trail > cycle_time) ?
 				NS_TO_CYCLE(hs_trail, cycle_time) + 1 : 2;
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 end*/
 
 	/* hs_exit > 100ns (spec) */
 	/* hs_exit = 120ns */
@@ -1221,10 +1212,11 @@ int bdg_tx_phy_config(enum DISP_BDG_ENUM module,
 
 	/* clk_trail > 60ns (spec) */
 	/* clk_trail = 100ns */
-	timcon2.CLK_TRAIL = NS_TO_CYCLE(100, cycle_time) + 1;
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 start*/
+	timcon2.CLK_TRAIL = NS_TO_CYCLE(80, cycle_time) + 1;
 	if (timcon2.CLK_TRAIL < 2)
 		timcon2.CLK_TRAIL = 2;
-
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 end*/
 	/* clk_exit > 100ns (spec) */
 	/* clk_exit = 200ns */
 	/* timcon3.CLK_EXIT = NS_TO_CYCLE(200, cycle_time); */
@@ -1310,12 +1302,13 @@ int bdg_tx_phy_config(enum DISP_BDG_ENUM module,
 		"%s, bg_tx_data_phy_cycle=%d, LPX=%d, HS_PRPR=%d, HS_ZERO=%d, HS_TRAIL=%d, DA_HS_EXIT=%d\n",
 		__func__, bg_tx_data_phy_cycle, timcon0.LPX, timcon0.HS_PRPR,
 		 timcon0.HS_ZERO, timcon0.HS_TRAIL, timcon1.DA_HS_EXIT);
-
-	DISPINFO(
-		"%s, TA_GO=%d, TA_GET=%d, TA_SURE=%d, CLK_HS_PRPR=%d, CLK_ZERO=%d, CLK_TRAIL=%d, CLK_HS_EXIT=%d, CLK_HS_POST=%d\n",
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 start*/
+	printk(
+		"%s, TA_GO=%d, TA_GET=%d, TA_SURE=%d, CLK_HS_PRPR=%d, CLK_ZERO=%d, CLK_TRAIL=%d, CLK_HS_EXIT=%d, CLK_HS_POST=%d, HS_TRAIL=%d, cycle_time = %d\n",
 		__func__, timcon1.TA_GO, timcon1.TA_GET, timcon1.TA_SURE,
 		timcon3.CLK_HS_PRPR, timcon2.CLK_ZERO, timcon2.CLK_TRAIL,
-		 timcon3.CLK_HS_EXIT, timcon3.CLK_HS_POST);
+		 timcon3.CLK_HS_EXIT, timcon3.CLK_HS_POST, timcon0.HS_TRAIL, cycle_time);
+/*K19A K19A-138 solve mipi timing  by feiwen at 2021/5/19 end*/
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		DSI_OUTREGBIT(cmdq, struct DSI_TX_PHY_TIMCON0_REG,
@@ -1378,11 +1371,11 @@ int bdg_tx_phy_config(enum DISP_BDG_ENUM module,
 int bdg_tx_txrx_ctrl(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-	unsigned int i;
+	int i;
 	int lane_num = tx_params->LANE_NUM;
 	bool hstx_cklp_en = tx_params->cont_clock ? FALSE : TRUE;
 	bool dis_eotp_en = tx_params->IsCphy ? TRUE : FALSE;
-	bool ext_te_en = (tx_params->mode != CMD_MODE) ? FALSE : TRUE;
+	bool ext_te_en = tx_params->mode ? FALSE : TRUE;
 
 	DISPFUNCSTART();
 
@@ -1424,7 +1417,7 @@ int bdg_tx_txrx_ctrl(enum DISP_BDG_ENUM module,
 int bdg_tx_ps_ctrl(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-	unsigned int i;
+	int i;
 	unsigned int ps_wc, width, bpp, ps_sel;
 
 	DISPFUNCSTART();
@@ -1491,9 +1484,12 @@ int bdg_tx_ps_ctrl(enum DISP_BDG_ENUM module,
 int bdg_tx_vdo_timing_set(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-	unsigned int i;
-	u32 dsi_buf_bpp, data_init_byte;
-	data_init_byte = 0;
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 start */
+	int i,j;
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 end */
+/* Huaqin modify for HQ-146521 by caogaojie at 2021/08/02 start */
+	u32 dsi_buf_bpp = 0, data_init_byte = 0;
+/* Huaqin modify for HQ-146521 by caogaojie at 2021/08/02 end */
 
 	DISPFUNCSTART();
 
@@ -1580,7 +1576,17 @@ int bdg_tx_vdo_timing_set(enum DISP_BDG_ENUM module,
 					(tx_params->vertical_backporch));
 		DSI_OUTREG32(cmdq, TX_REG[i]->DSI_TX_VFP_NL,
 					(tx_params->vertical_frontporch));
-
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 start */
+#ifdef CONFIG_MTK_HIGH_FRAME_RATE
+		for (j = 0; j < DFPS_LEVELS; j++) {
+			if (tx_params->dfps_params[j].fps == 9000) {
+				DSI_OUTREG32(cmdq, TX_REG[i]->DSI_TX_VFP_NL,
+					(tx_params->dfps_params[j].vertical_frontporch));
+				break;
+			}
+		}
+#endif
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 end */
 		DSI_OUTREG32(cmdq, TX_REG[i]->DSI_TX_HSA_WC, hsa_byte);
 		DSI_OUTREG32(cmdq, TX_REG[i]->DSI_TX_HBP_WC, hbp_byte);
 		DSI_OUTREG32(cmdq, TX_REG[i]->DSI_TX_HFP_WC, hfp_byte);
@@ -1593,7 +1599,7 @@ int bdg_tx_vdo_timing_set(enum DISP_BDG_ENUM module,
 int bdg_tx_buf_rw_set(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-	unsigned int i;
+	int i;
 	unsigned int width, height, rw_times, tmp;
 
 	DISPFUNCSTART();
@@ -1642,7 +1648,7 @@ int bdg_tx_buf_rw_set(enum DISP_BDG_ENUM module,
 int bdg_tx_enable_hs_clk(enum DISP_BDG_ENUM module,
 				void *cmdq, bool enable)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1695,7 +1701,7 @@ int dsi_set_fps(lcm_dsi_params *dsi_params, enum dsi_fps_enum fps)
 int bdg_tx_set_mode(enum DISP_BDG_ENUM module,
 				void *cmdq, unsigned int mode)
 {
-	unsigned int i = 0;
+	int i = 0;
 
 	DISPINFO("%s, mode=%d\n", __func__, mode);
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
@@ -1717,7 +1723,7 @@ int bdg_tx_bist_pattern(enum DISP_BDG_ENUM module,
 				unsigned int red, unsigned int green,
 				unsigned int blue)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1751,7 +1757,7 @@ int bdg_tx_bist_pattern(enum DISP_BDG_ENUM module,
 
 int bdg_tx_start(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1770,7 +1776,7 @@ int bdg_tx_start(enum DISP_BDG_ENUM module, void *cmdq)
 
 int bdg_tx_clr_sta(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1801,7 +1807,7 @@ int bdg_set_dcs_read_cmd(bool enable, void *cmdq)
 
 int bdg_tx_stop(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1814,7 +1820,7 @@ int bdg_tx_stop(enum DISP_BDG_ENUM module, void *cmdq)
 
 int bdg_tx_reset(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1831,7 +1837,7 @@ int bdg_tx_reset(enum DISP_BDG_ENUM module, void *cmdq)
 int bdg_vm_mode_set(enum DISP_BDG_ENUM module, bool enable,
 			unsigned int long_pkt, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		if (enable) {
@@ -1852,7 +1858,7 @@ int bdg_vm_mode_set(enum DISP_BDG_ENUM module, bool enable,
 
 int bdg_tx_cmd_mode(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -1881,7 +1887,8 @@ int bdg_dsi_dump_reg(enum DISP_BDG_ENUM module, unsigned int level)
 {
 	unsigned int i, k, tmp;
 
-#if 0
+//	DISPFUNCSTART();
+
 	DISPMSG("0x%08x: 0x%08x\n", 0x0000d314, mtk_spi_read(0x0000d314));
 	DISPMSG("0x%08x: 0x%08x\n", 0x00007310, mtk_spi_read(0x00007310));
 	DISPMSG("0x%08x: 0x%08x\n", 0x000231a8, mtk_spi_read(0x000231a8));
@@ -1889,311 +1896,43 @@ int bdg_dsi_dump_reg(enum DISP_BDG_ENUM module, unsigned int level)
 	DISPMSG("0x%08x: 0x%08x\n", 0x0002106c, mtk_spi_read(0x0002106c));
 	DISPMSG("0x%08x: 0x%08x\n", 0x00021300, mtk_spi_read(0x00021300));
 	DISPMSG("0x%08x: 0x%08x\n", 0x00003010, mtk_spi_read(0x00003010));
-#endif
 	for (i = DSI_MODULE_BEGIN(module); i <= DSI_MODULE_END(module); i++) {
 		unsigned long dsc_base_addr = (unsigned long)DSC_REG;
 		unsigned long dsi_base_addr = (unsigned long)TX_REG[i];
 		unsigned long mipi_base_addr = (unsigned long)MIPI_TX_REG;
-		unsigned long rx_base_addr = (unsigned long)DSI2_REG;
-		unsigned long rx_phy_base_addr = (unsigned long)MIPI_RX_PHY_BASE;
 
 		DISPMSG("========================== mt6382 RX REGS ==\n", i);
 		tmp = mtk_spi_read(0x0000d00c);
 		DISPMSG("INT_ST_MAIN(0x0000d00c): 0x%08x\n", tmp);
 		if (tmp != 0) {
 			if (tmp & (1 << 0))
-				DISPMSG("INT_ST_MAIN(bit0), int_st_phy_fatal\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_phy_fatal\n", (1 << 0));
 			if (tmp & (1 << 1))
-				DISPMSG("INT_ST_MAIN(bit1), int_st_dsi_fatal\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_dsi_fatal\n", (1 << 1));
 			if (tmp & (1 << 2))
-				DISPMSG("INT_ST_MAIN(bit2), int_st_ddi_fatal\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_ddi_fatal\n", (1 << 2));
 			if (tmp & (1 << 3))
-				DISPMSG("INT_ST_MAIN(bit3), int_st_ipi_fatal\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_ipi_fatal\n", (1 << 3));
 			if (tmp & (1 << 4))
-				DISPMSG("INT_ST_MAIN(bit4), int_st_fifo_fatal\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_fifo_fatal\n", (1 << 4));
 			if (tmp & (1 << 16))
-				DISPMSG("INT_ST_MAIN(bit16), int_st_phy\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_phy\n", (1 << 16));
 			if (tmp & (1 << 17))
-				DISPMSG("INT_ST_MAIN(bit17), int_st_dsi\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_dsi\n", (1 << 17));
 			if (tmp & (1 << 18))
-				DISPMSG("INT_ST_MAIN(bit18), int_st_ddi\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_ddi\n", (1 << 18));
 			if (tmp & (1 << 19))
-				DISPMSG("INT_ST_MAIN(bit19), int_st_ipi\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_ipi\n", (1 << 19));
 			if (tmp & (1 << 21))
-				DISPMSG("INT_ST_MAIN(bit21), int_st_err_rpt\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_err_rpt\n", (1 << 21));
 			if (tmp & (1 << 22))
-				DISPMSG("INT_ST_MAIN(bit22), int_st_rx_triggers\n");
+				DISPMSG("INT_ST_MAIN(bit%d), int_st_rx_triggers\n", (1 << 22));
 		}
 
-		tmp = mtk_spi_read(0x0000d200);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_PHY_FATAL(0x0000d200): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("Lane 0 Start-of-Transmission Synchronization Error.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("Lane 0 Escape Entry Error.\n");
-			if (tmp & (1 << 2))
-				DISPMSG("Lane 0 Control Error.\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Lane 0 LP Data Transmission Synchronization Error.\n");
-			if (tmp & (1 << 4))
-				DISPMSG("Lane 0 LP0 Contention Error.\n");
-			if (tmp & (1 << 5))
-				DISPMSG("Lane 0 LP1 Contention Error.\n");
-			if (tmp & (1 << 7)) {
-				DISPMSG("Peripheral LPTX timeout defined in DSI ");
-				DISPMSG("protocol, avoid to bus contention.\n");
-			}
-			if (tmp & (1 << 8))
-				DISPMSG("Lane 1 Start-of-Transmission Synchronization Error.\n");
-			if (tmp & (1 << 9))
-				DISPMSG("Lane 1 Escape Entry Error.\n");
-			if (tmp & (1 << 10))
-				DISPMSG("Lane 1 Control Error.\n");
-			if (tmp & (1 << 11)) {
-				DISPMSG("Skew between lanes is greater than ");
-				DISPMSG("maximum allowed value.\n");
-			}
-			if (tmp & (1 << 16))
-				DISPMSG("Lane 2 Start-of-Transmission Synchronization Error.\n");
-			if (tmp & (1 << 17))
-				DISPMSG("Lane 2 Escape Entry Error.\n");
-			if (tmp & (1 << 18))
-				DISPMSG("Lane 2 Control Error.\n");
-			if (tmp & (1 << 24))
-				DISPMSG("Lane 3 Start-of-Transmission Synchronization Error.\n");
-		}
-
-		tmp = mtk_spi_read(0x0000d220);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_DSI_FATAL(0x0000d220): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("Payload Checksum error detected on VC 0.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("Payload Checksum error detected on VC 1.\n");
-			if (tmp & (1 << 2))
-				DISPMSG("Payload Checksum error detected on VC 2.\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Payload Checksum error detected on VC 3.\n");
-			if (tmp & (1 << 4)) {
-				DISPMSG("LPRX only. Payload size Mismatch error ");
-				DISPMSG("detected on VC 0. Causes Payload Checksum error.\n");
-			}
-			if (tmp & (1 << 5)) {
-				DISPMSG("LPRX only. Payload size Mismatch error ");
-				DISPMSG("detected on VC 1. Causes Payload Checksum error.\n");
-			}
-			if (tmp & (1 << 6)) {
-				DISPMSG("LPRX only. Payload size Mismatch error ");
-				DISPMSG("detected on VC 2. Causes Payload Checksum error.\n");
-			}
-			if (tmp & (1 << 7)) {
-				DISPMSG("LPRX only. Payload size Mismatch error ");
-				DISPMSG("detected on VC 3. Causes Payload Checksum error.\n");
-			}
-			if (tmp & (1 << 16))
-				DISPMSG("Header error unrecoverable.\n");
-			if (tmp & (1 << 17)) {
-				DISPMSG("Read or TE command is followed by another read ");
-				DISPMSG("or write command instead of BTA.\n");
-			}
-			if (tmp & (1 << 18))
-				DISPMSG("Invalid data type detected.\n");
-		}
-
-		tmp = mtk_spi_read(0x0000d240);
-		DISPMSG("INT_ST_DDI_FATAL(0x0000d240): 0x%08x\n", tmp);
-		if (tmp & (1 << 0)) {
-			DISPMSG("This timeout should rise when the DSI Display panel is not ");
-			DISPMSG("outputting response data during programmed value.\n");
-			DISPMSG("Data received after this timeout are ignored and ");
-			DISPMSG("related logic will be reset.\n");
-		}
-		if (tmp & (1 << 1))
-			DISPMSG("Reports error when panel responds an invalid data type.\n");
-
-		tmp = mtk_spi_read(0x0000d260);
-		DISPMSG("INT_ST_IPI_FATAL(0x0000d260): 0x%08x\n", tmp);
-		if (tmp & (1 << 0)) {
-			DISPMSG("This bit asserts when receiving error IPI timing information, ");
-			DISPMSG("e.g. no HSE after HSS in pulse mode.\n");
-		}
-		if (tmp & (1 << 1)) {
-			DISPMSG("This bit asserts when receiving non-integer pixel ");
-			DISPMSG("number video packet.\n");
-		}
-		tmp = mtk_spi_read(0x0000d280);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_FIFO_FATAL(0x0000d280): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("LPRX FIFO overflow, caused by LPRX from PHY.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("LPTX FIFO overflow, caused by LPTX from DDI.\n");
-			if (tmp & (1 << 4))
-				DISPMSG("D-PHY HSRX elastbuf overflow, caused by D-PHY HSRX.\n");
-			if (tmp & (1 << 8))
-				DISPMSG("DDI Header FIFO overflow, caused by HSRX from PPI.\n");
-			if (tmp & (1 << 9))
-				DISPMSG("DDI Payload FIFO overflow, caused by HSRX from PPI.\n");
-			if (tmp & (1 << 16))
-				DISPMSG("IPI Control FIFO overflow, caused by HSRX from PPI.\n");
-			if (tmp & (1 << 17))
-				DISPMSG("IPI Pixel FIFO overflow, caused by HSRX from PPI.\n");
-			if (tmp & (1 << 18))
-				DISPMSG("IPI Pixel FIFO overflow, caused by read from IPI.\n");
-		}
-
-		tmp = mtk_spi_read(0x0000d210);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_PHY(0x0000d210): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("Lane 0 Start-of-Transmission(SoT) Error.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("Lane 1 Start-of-Transmission(SoT) Error.\n");
-			if (tmp & (1 << 2))
-				DISPMSG("Lane 2 Start-of-Transmission(SoT) Error.\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Lane 3 Start-of-Transmission(SoT) Error.\n");
-			if (tmp & (1 << 4))
-				DISPMSG("HS Invalid Code Word Detection on lane 0.\n");
-			if (tmp & (1 << 5))
-				DISPMSG("HS Invalid Code Word Detection on lane 1.\n");
-			if (tmp & (1 << 6))
-				DISPMSG("HS Invalid Code Word Detection on lane 2.\n");
-			if (tmp & (1 << 16)) {
-				DISPMSG("This timeout is to inform the user when the LPDT ");
-				DISPMSG("transmission duration is more than programmed time.\n");
-			}
-			if (tmp & (1 << 17)) {
-				DISPMSG("This timeout is to inform the user when the high-speed ");
-				DISPMSG("reception duration is more than the programmed time.\n");
-			}
-		}
-
-		tmp = mtk_spi_read(0x0000d230);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_DSI(0x0000d230): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("Header ECC Check error detected on VC 0.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("Header ECC Check error detected on VC 1.\n");
-			if (tmp & (1 << 2))
-				DISPMSG("Header ECC Check error detected on VC 2.\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Header ECC Check error detected on VC 3.\n");
-			if (tmp & (1 << 4)) {
-				DISPMSG("EoT packet detected error, according the configuration ");
-				DISPMSG("EOTP_CFG.\n");
-			}
-		}
-		tmp = mtk_spi_read(0x0000d250);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_DDI(0x0000d250): 0x%08x\n", tmp);
-			if (tmp & (1 << 0)) {
-				DISPMSG("This timeout should rise when the DSI Display panel is ");
-				DISPMSG("not accepting incoming data during programmed value.\n");
-			}
-			if (tmp & (1 << 1)) {
-				DISPMSG("This field reports when DSI2 host sends an invalid ");
-				DISPMSG("virtual channel for DDI command packets.\n");
-			}
-			if (tmp & (1 << 4)) {
-				DISPMSG("This field reports when received response packet number ");
-				DISPMSG("mismatch with the value in WC.\n");
-			}
-			if (tmp & (1 << 5))
-				DISPMSG("This field reports when panel responds an invalid VC.\n");
-			if (tmp & (1 << 6)) {
-				DISPMSG("This field reports when panel responds data after ");
-				DISPMSG("response timeout is fired.\n");
-			}
-		}
-
-		tmp = mtk_spi_read(0x0000d270);
-		DISPMSG("INT_ST_IPI(0x0000d270): 0x%08x\n", tmp);
-		if (tmp & (1 << 0)) {
-			DISPMSG("This bit asserts when receiving invalid virtual channel packets ");
-			DISPMSG("according the configuration IPI_VALID_VC_CFG.\n");
-		}
-		if (tmp & (1 << 1)) {
-			DISPMSG("This bit asserts when frame timing information is corrupted ");
-			DISPMSG("because of back pressure.\n");
-		}
-		tmp = mtk_spi_read(0x0000d2b0);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_ERR_RPT(0x0000d2b0): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("SOT Error.\n");
-			if (tmp & (1 << 1))
-				DISPMSG("SOT Sync Error.\n");
-			if (tmp & (1 << 2))
-				DISPMSG("EOT Error.\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Escape mode Entry Command Error.\n");
-			if (tmp & (1 << 4))
-				DISPMSG("Low-power Transmit Sync Error.\n");
-			if (tmp & (1 << 5))
-				DISPMSG("Peripheral Timeout Error.\n");
-			if (tmp & (1 << 6))
-				DISPMSG("False Control Error.\n");
-			if (tmp & (1 << 7))
-				DISPMSG("Contention detected.\n");
-			if (tmp & (1 << 8))
-				DISPMSG("ECC Error, single-bit(detected and corrected).\n");
-			if (tmp & (1 << 9))
-				DISPMSG("ECC Error, multi-bit(detected and not corrected).\n");
-			if (tmp & (1 << 10))
-				DISPMSG("Payload Checksum Error(long packet only).\n");
-			if (tmp & (1 << 11))
-				DISPMSG("DSI Data Type Not Recognized.\n");
-			if (tmp & (1 << 12)) {
-				DISPMSG("DSI VC ID invalid, both DDI_VALID_VC_CFG & ");
-				DISPMSG("IPI_VALID_VC_CFG related error will assert this bit.\n");
-			}
-			if (tmp & (1 << 13))
-				DISPMSG("Invalid Transmission Length.\n");
-			if (tmp & (1 << 15))
-				DISPMSG("DSI Protocol Violation.\n");
-			if (tmp & (1 << 16))
-				DISPMSG("High-speed Invalid Code Word Detection on lane.\n");
-		}
-
-		tmp = mtk_spi_read(0x0000d2d0);
-		if (tmp != 0) {
-			DISPMSG("INT_ST_RX_TRIGGERS(0x0000d2d0): 0x%08x\n", tmp);
-			if (tmp & (1 << 0))
-				DISPMSG("Trigger 0\n");
-			if (tmp & (1 << 1))
-				DISPMSG("Trigger 1\n");
-			if (tmp & (1 << 2))
-				DISPMSG("Trigger 2\n");
-			if (tmp & (1 << 3))
-				DISPMSG("Trigger 3\n");
-		}
-		if (level > 2) {
-			DISPMSG("========================== mt6382 RX Full REGS ==\n");
-	//		for (k = 0; k < sizeof(struct BDG_TX_REGS); k += 16) {
-			for (k = 0; k < 0x210; k += 16) {
-				DISPMSG("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n", rx_base_addr + k,
-					mtk_spi_read(rx_base_addr + k),
-					mtk_spi_read(rx_base_addr + k + 0x4),
-					mtk_spi_read(rx_base_addr + k + 0x8),
-					mtk_spi_read(rx_base_addr + k + 0xc));
-			}
-			DISPMSG("========================== mt6382 RX PHY REGS ==\n");
-	//		for (k = 0; k < sizeof(struct BDG_TX_REGS); k += 16) {
-			for (k = 12288; k < 0x15440; k += 16) {
-				DISPMSG("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k / 4,
-					mtk_spi_read(rx_phy_base_addr + k),
-					mtk_spi_read(rx_phy_base_addr + k + 0x4),
-					mtk_spi_read(rx_phy_base_addr + k + 0x8),
-					mtk_spi_read(rx_phy_base_addr + k + 0xc));
-			}
-		}
 		DISPMSG("========================== mt6382 DSI%d REGS ==\n", i);
 //		for (k = 0; k < sizeof(struct BDG_TX_REGS); k += 16) {
-		for (k = 0; k < 0x4f0; k += 16) {
-			DISPMSG("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n", dsi_base_addr + k,
+		for (k = 0; k < 0x210; k += 16) {
+			DISPMSG("0x%08x: 0x%08x 0x%08x 0x%08x 0x%08x\n", k,
 				mtk_spi_read(dsi_base_addr + k),
 				mtk_spi_read(dsi_base_addr + k + 0x4),
 				mtk_spi_read(dsi_base_addr + k + 0x8),
@@ -2236,9 +1975,10 @@ int bdg_dsi_dump_reg(enum DISP_BDG_ENUM module, unsigned int level)
 	return 0;
 }
 
+
 int bdg_tx_wait_for_idle(enum DISP_BDG_ENUM module)
 {
-	unsigned int i;
+	int i;
 	unsigned int timeout = 5000; /* unit: usec */
 	unsigned int status;
 
@@ -2275,12 +2015,14 @@ int ap_tx_phy_config(enum DISP_BDG_ENUM module,
 int bdg_dsi_line_timing_dphy_setting(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
+/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 start */
 	unsigned int width, height, lanes, ps_wc, new_hfp_byte;
 	unsigned int bg_tx_total_word_cnt = 0;
 	unsigned int bg_tx_line_time = 0, disp_pipe_line_time = 0;
 	unsigned int rxtx_ratio = 0;
 //	unsigned int ap_tx_total_word_cnt = 0, ap_tx_total_word_cnt_no_hfp_wc = 0;
 
+	mtk_panel_compare();
 	DISPFUNCSTART();
 	width = tx_params->horizontal_active_pixel / 1;
 	height = tx_params->vertical_active_line;
@@ -2291,12 +2033,13 @@ int bdg_dsi_line_timing_dphy_setting(enum DISP_BDG_ENUM module,
 	if (dsc_en) {
 //		ps_wc = width;
 		ps_wc = width * 24 / 8 / 3;	/* for 8bpp, 1/3 compression */
-		rxtx_ratio = RXTX_RATIO;	/* ratio=2.30 */
+		rxtx_ratio = mtk_rxtx_ratio;        /* ratio=2.30 */
 	} else {
 		ps_wc = width * 24 / 8;	/* for 8bpp, 1/3 compression */
 		rxtx_ratio = 100;
 	}
 	new_hfp_byte = hfp_byte;
+/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 end */
 
 	DISPMSG("%s, dsc_en=%d, hsa_byte=%d, hbp_byte=%d\n",
 		__func__, dsc_en, hsa_byte, hbp_byte);
@@ -2344,7 +2087,9 @@ int bdg_dsi_line_timing_dphy_setting(enum DISP_BDG_ENUM module,
 	bg_tx_line_cycle = (bg_tx_total_word_cnt + (lanes - 1)) / lanes;
 	bg_tx_line_time = bg_tx_line_cycle * 8000 / tx_data_rate;
 
-	disp_pipe_line_time = width * 1000 / MM_CLK;
+	/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 start */
+	disp_pipe_line_time = width * 1000 / mtk_mm_clk;
+	/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 end */
 
 	DISPMSG("bg_tx_total_word_cnt=%d, bg_tx_line_cycle=%d\n",
 		bg_tx_total_word_cnt, bg_tx_line_cycle);
@@ -2491,6 +2236,1318 @@ unsigned int get_bdg_tx_mode(void)
 	return bdg_tx_mode;
 }
 
+#define DELAY_US 1
+void mt6382_nt36672c_fhd_vdo_init(bool dsc_on)
+{
+	DISPFUNCSTART();
+	//lcm_dcs_write_seq_static(ctx, 0xFF, 0X10);
+	mtk_spi_write(0x00021d00, 0x10ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		DISPMSG("%s, status=0x%x\n",
+			__func__, mtk_spi_read((unsigned long)(&TX_REG[0]->DSI_TX_INTSTA)));
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0xFB, 0x01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		DISPMSG("%s, status=0x%x\n",
+			__func__, mtk_spi_read((unsigned long)(&TX_REG[0]->DSI_TX_INTSTA)));
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	DISPMSG("%s, dsc_en=%d, tx_data_rate=%d\n", __func__, dsc_on, tx_data_rate);
+	//DSC ON && set PPS
+	if (1) {
+		//lcm_dcs_write_seq_static(ctx, 0xC0, 0x03);
+		mtk_spi_write(0x00021d00, 0x03c02300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			DISPMSG("%s, status=0x%x\n",
+				__func__, mtk_spi_read((unsigned long)(&TX_REG[0]->DSI_TX_INTSTA)));
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+	} else {
+		//lcm_dcs_write_seq_static(ctx, 0xC0, 0x00);
+		mtk_spi_write(0x00021d00, 0x00c02300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+	}
+
+	//lcm_dcs_write_seq_static(ctx, 0xC1, 0x89, 0x28, 0x00, 0x08, 0x00, 0xAA,
+	//0x02, 0x0E, 0x00, 0x2B, 0x00, 0x07, 0x0D, 0xB7,
+	//0x0C, 0xB7);
+	mtk_spi_write(0x00021d00, 0x00112902);
+	mtk_spi_write(0x00021d04, 0x002889c1);
+	mtk_spi_write(0x00021d08, 0x02aa0008);
+	mtk_spi_write(0x00021d0c, 0x002b000e);
+	mtk_spi_write(0x00021d10, 0x0cb70d07);
+	mtk_spi_write(0x00021d14, 0x000000b7);
+	mtk_spi_write(0x00021060, 0x00000006); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		DISPMSG("%s, status=0x%x\n",
+			__func__, mtk_spi_read((unsigned long)(&TX_REG[0]->DSI_TX_INTSTA)));
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0xC2, 0x1B, 0XA0);
+	mtk_spi_write(0x00021d00, 0x00032902);
+	mtk_spi_write(0x00021d04, 0x00a01bc2);
+	mtk_spi_write(0x00021060, 0x00000002); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0xFF, 0X20);
+	mtk_spi_write(0x00021d00, 0x20ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0xFB, 0x01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X01, 0X66);
+	mtk_spi_write(0x00021d00, 0x66011500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X32, 0X4D);
+	mtk_spi_write(0x00021d00, 0x4d321500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X69, 0XD1);
+	mtk_spi_write(0x00021d00, 0xd1691500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XF2, 0X64);
+	mtk_spi_write(0x00021d00, 0x64f22300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XF4, 0X64);
+	mtk_spi_write(0x00021d00, 0x64f42300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XF6, 0X64);
+	mtk_spi_write(0x00021d00, 0x64f62300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XF9, 0X64);
+	mtk_spi_write(0x00021d00, 0x64f92300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X26);
+	mtk_spi_write(0x00021d00, 0x26ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X81, 0X0E);
+	mtk_spi_write(0x00021d00, 0x0e811500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X84, 0X03);
+	mtk_spi_write(0x00021d00, 0x03841500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X86, 0X03);
+	mtk_spi_write(0x00021d00, 0x03861500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X88, 0X07);
+	mtk_spi_write(0x00021d00, 0x07881500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X27);
+	mtk_spi_write(0x00021d00, 0x27ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE3, 0X01);
+	mtk_spi_write(0x00021d00, 0x01e32300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE4, 0XEC);
+	mtk_spi_write(0x00021d00, 0xece42300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE5, 0X02);
+	mtk_spi_write(0x00021d00, 0x02e52300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE6, 0XE3);
+	mtk_spi_write(0x00021d00, 0xe3e62300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE7, 0X01);
+	mtk_spi_write(0x00021d00, 0x01e72300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE8, 0XEC);
+	mtk_spi_write(0x00021d00, 0xece82300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XE9, 0X02);
+	mtk_spi_write(0x00021d00, 0x02e92300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XEA, 0X22);
+	mtk_spi_write(0x00021d00, 0x22ea2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XEB, 0X03);
+	mtk_spi_write(0x00021d00, 0x03eb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XEC, 0X32);
+	mtk_spi_write(0x00021d00, 0x32ec2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XED, 0X02);
+	mtk_spi_write(0x00021d00, 0x02ed2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XEE, 0X22);
+	mtk_spi_write(0x00021d00, 0x22ee2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X2A);
+	mtk_spi_write(0x00021d00, 0x2aff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X0C, 0X04);
+	mtk_spi_write(0x00021d00, 0x040c1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X0F, 0X01);
+	mtk_spi_write(0x00021d00, 0x010f1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X11, 0XE0);
+	mtk_spi_write(0x00021d00, 0xe0111500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X15, 0X0E);
+	mtk_spi_write(0x00021d00, 0x0e151500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X16, 0X78);
+	mtk_spi_write(0x00021d00, 0x78161500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X19, 0X0D);
+	mtk_spi_write(0x00021d00, 0x0d191500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X1A, 0XF4);
+	mtk_spi_write(0x00021d00, 0xf41a1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X37, 0X6E);
+	mtk_spi_write(0x00021d00, 0x6e371500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X88, 0X76);
+	mtk_spi_write(0x00021d00, 0x76881500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X2C);
+	mtk_spi_write(0x00021d00, 0x2cff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X4D, 0X1E);
+	mtk_spi_write(0x00021d00, 0x1e4d1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X4E, 0X04);
+	mtk_spi_write(0x00021d00, 0x044e1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X4F, 0X00);
+	mtk_spi_write(0x00021d00, 0x004f1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X9D, 0X1E);
+	mtk_spi_write(0x00021d00, 0x1e9d1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X9E, 0X04);
+	mtk_spi_write(0x00021d00, 0x049e1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X9F, 0X17);
+	mtk_spi_write(0x00021d00, 0x179f1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0XF0);
+	mtk_spi_write(0x00021d00, 0xf0ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X5A, 0X00);
+	mtk_spi_write(0x00021d00, 0x005a1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0XE0);
+	mtk_spi_write(0x00021d00, 0xe0ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X25, 0X02);
+	mtk_spi_write(0x00021d00, 0x02251500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X4E, 0X02);
+	mtk_spi_write(0x00021d00, 0x024e1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X85, 0X02);
+	mtk_spi_write(0x00021d00, 0x02851500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0XD0);
+	mtk_spi_write(0x00021d00, 0xd0ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X09, 0XAD);
+	mtk_spi_write(0x00021d00, 0xad091500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X20);
+	mtk_spi_write(0x00021d00, 0x20ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XF8, 0X64);
+	mtk_spi_write(0x00021d00, 0x64f82300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X2A);
+	mtk_spi_write(0x00021d00, 0x2aff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X1A, 0XF0);
+	mtk_spi_write(0x00021d00, 0xf01a1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+	//lcm_dcs_write_seq_static(ctx, 0X30, 0X5E);
+	mtk_spi_write(0x00021d00, 0x5e301500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X31, 0XCA);
+	mtk_spi_write(0x00021d00, 0xca311500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X34, 0XFE);
+	mtk_spi_write(0x00021d00, 0xfe341500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X35, 0X35);
+	mtk_spi_write(0x00021d00, 0x35351500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X36, 0XA2);
+	mtk_spi_write(0x00021d00, 0xa2361500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X37, 0XF8);
+	mtk_spi_write(0x00021d00, 0xf8371500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X38, 0X37);
+	mtk_spi_write(0x00021d00, 0x37381500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X39, 0XA0);
+	mtk_spi_write(0x00021d00, 0xa0391500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X3A, 0X5E);
+	mtk_spi_write(0x00021d00, 0x5e3a1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X53, 0XD7);
+	mtk_spi_write(0x00021d00, 0xd7531500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X88, 0X72);
+	mtk_spi_write(0x00021d00, 0x72881500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X88, 0X72);
+	mtk_spi_write(0x00021d00, 0x72881500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X24);
+	mtk_spi_write(0x00021d00, 0x24ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XC6, 0XC0);
+	mtk_spi_write(0x00021d00, 0xc0c62300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0XE0);
+	mtk_spi_write(0x00021d00, 0xe0ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X25, 0X00);
+	mtk_spi_write(0x00021d00, 0x00251500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X4E, 0X02);
+	mtk_spi_write(0x00021d00, 0x024e1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X35, 0X82);
+	mtk_spi_write(0x00021d00, 0x82351500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0XC0);
+	mtk_spi_write(0x00021d00, 0xc0ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X9C, 0X11);
+	mtk_spi_write(0x00021d00, 0x119c1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0X9D, 0X11);
+	mtk_spi_write(0x00021d00, 0x119d1500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	if (dsc_on) {
+		if (tx_data_rate < 600) {
+		//60HZ
+			//lcm_dcs_write_seq_static(ctx, 0XFF, 0X25);
+			mtk_spi_write(0x00021d00, 0x25ff2300);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+
+			//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+			mtk_spi_write(0x00021d00, 0x01fb2300);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+
+			//lcm_dcs_write_seq_static(ctx, 0X18, 0X22);
+			mtk_spi_write(0x00021d00, 0x22181500);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+		} else if (tx_data_rate < 900) {
+		//90HZ
+			//lcm_dcs_write_seq_static(ctx, 0XFF, 0X25);
+			mtk_spi_write(0x00021d00, 0x25ff2300);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+
+			//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+			mtk_spi_write(0x00021d00, 0x01fb2300);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+
+			//lcm_dcs_write_seq_static(ctx, 0X18, 0X21);
+			mtk_spi_write(0x00021d00, 0x21181500);
+			mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+			mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+			mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+			while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+				udelay(DELAY_US);
+			}
+			mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+			udelay(0);
+		}
+	} else {
+		//60HZ
+		//lcm_dcs_write_seq_static(ctx, 0XFF, 0X25);
+		mtk_spi_write(0x00021d00, 0x25ff2300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+
+		//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+		mtk_spi_write(0x00021d00, 0x01fb2300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+
+		//lcm_dcs_write_seq_static(ctx, 0X18, 0X22);
+		mtk_spi_write(0x00021d00, 0x22181500);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+	}
+
+	//lcm_dcs_write_seq_static(ctx, 0XFF, 0X10);
+	mtk_spi_write(0x00021d00, 0x10ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0XFB, 0X01);
+	mtk_spi_write(0x00021d00, 0x01fb2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//Set DSC ON/OFF
+	if (dsc_on) {
+		//lcm_dcs_write_seq_static(ctx, 0xC0, 0x03);
+		mtk_spi_write(0x00021d00, 0x03c02300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			DISPMSG("%s, status=0x%x\n",
+				__func__, mtk_spi_read((unsigned long)(&TX_REG[0]->DSI_TX_INTSTA)));
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+	} else {
+		//lcm_dcs_write_seq_static(ctx, 0xC0, 0x00);
+		mtk_spi_write(0x00021d00, 0x00c02300);
+		mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+		mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+		mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+		while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+			udelay(DELAY_US);
+		}
+		mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+		udelay(0);
+	}
+
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0x51, 0x00);
+	mtk_spi_write(0x00021d00, 0x00511500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0x35, 0x00);
+	mtk_spi_write(0x00021d00, 0x00351500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0x53, 0x24);
+	mtk_spi_write(0x00021d00, 0x24531500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0x55, 0x00);
+	mtk_spi_write(0x00021d00, 0x00551500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0xFF, 0x10);
+	mtk_spi_write(0x00021d00, 0x10ff2300);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	//lcm_dcs_write_seq_static(ctx, 0x11);
+	mtk_spi_write(0x00021d00, 0x00110500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+
+	msleep(120);
+	//lcm_dcs_write_seq_static(ctx, 0x29);
+	mtk_spi_write(0x00021d00, 0x00290500);
+	mtk_spi_write(0x00021060, 0x00000001); //DSI_CMDQ_CON
+	mtk_spi_write(0x00021000, 0x00000000); //DSI_START
+	mtk_spi_write(0x00021000, 0x00000001); //DSI_START
+	while ((mtk_spi_read(0x0002100c) & 0x2) != 0x2) { //wait dsi is not busy
+		udelay(DELAY_US);
+	}
+	mtk_spi_write(0x0002100c, 0xfffd); //write 0 clear
+	udelay(0);
+	DISPFUNCEND();
+}
+
 void dbg_set_cmdq_V2(enum DISP_BDG_ENUM module, void *cmdq,
 			unsigned int cmd, unsigned char count,
 		     unsigned char *para_list, unsigned char force_update)
@@ -2630,7 +3687,7 @@ int bdg_tx_init(enum DISP_BDG_ENUM module,
 	ret |= bdg_mipi_tx_dphy_clk_setting(module, cmdq, tx_params);
 	udelay(20);
 
-	ret |= bdg_tx_phy_config(module, cmdq, tx_data_rate);
+	ret |= bdg_tx_phy_config(module, cmdq, tx_params);
 	ret |= bdg_tx_txrx_ctrl(module, cmdq, tx_params);
 	ret |= bdg_tx_ps_ctrl(module, cmdq, tx_params);
 	ret |= bdg_tx_vdo_timing_set(module, cmdq, tx_params);
@@ -2652,7 +3709,7 @@ int bdg_tx_init(enum DISP_BDG_ENUM module,
 
 int bdg_tx_deinit(enum DISP_BDG_ENUM module, void *cmdq)
 {
-	unsigned int i;
+	int i;
 
 	DISPFUNCSTART();
 
@@ -3191,10 +4248,11 @@ LEGACY_VFP:
 
 	cmdqRecDestroy(handle);
 }
+
 int bdg_dsc_init(enum DISP_BDG_ENUM module,
 			void *cmdq, struct LCM_DSI_PARAMS *tx_params)
 {
-#ifdef CONFIG_MTK_MT6382_BDG
+
 	unsigned long width = tx_params->horizontal_active_pixel / 1;
 	unsigned long height = tx_params->vertical_active_line;
 	unsigned int init_delay_limit, init_delay_height;
@@ -3320,7 +4378,6 @@ int bdg_dsc_init(enum DISP_BDG_ENUM module,
 	DSI_OUTREG32(cmdq, DSC_REG->DISP_DSC_PPS[19], 0xd1ed);
 
 	DISPFUNCEND();
-#endif
 	return 0;
 }
 
@@ -3427,11 +4484,12 @@ int mipi_dsi_rx_mac_init(enum DISP_BDG_ENUM module,
 	DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_RDY_TO_CNT_OS, 0);
 	DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_RESP_TO_CNT_OS, 0);
 	DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_VALID_VC_CFG_OS, 0xf);
-	/* 0x1b for MMCLK 270M 0x37 for MMCLK 405M */
-	if (MM_CLK == 270)
-		DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_CLK_MGR_CFG_OS, 0x1b);
-	else
-		DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_CLK_MGR_CFG_OS, 0x37);
+	/* 0x1b for MMCLK 270M 0x37 for MMCLK 407M */
+#ifdef _90HZ_
+	DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_CLK_MGR_CFG_OS, 0x1b);
+#else
+	DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_DDI_CLK_MGR_CFG_OS, 0x37);
+#endif
 //	}
 
 	//video mode/ipi
@@ -3440,10 +4498,10 @@ int mipi_dsi_rx_mac_init(enum DISP_BDG_ENUM module,
 
 		if (ipi_mode_qst)
 			DSI_OUTREG32(cmdq, DSI2_REG->DSI2_DEVICE_IPI_MODE_CFG_OS, 1);
-
-		t_ipi_clk  = 1000 / MM_CLK;
+	/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 start */
+		t_ipi_clk  = 1000 / mtk_mm_clk;
 		//t_hact_ipi = frame_width * t_ipi_clk;
-		t_hact_ipi = frame_width * 1000 / MM_CLK;
+		t_hact_ipi = frame_width * 1000 / mtk_mm_clk;
 		if (tx_params->IsCphy) { //c-phy
 			temp = 7000;
 			t_ppi_clk = temp / ap_tx_data_rate;
@@ -3460,13 +4518,13 @@ int mipi_dsi_rx_mac_init(enum DISP_BDG_ENUM module,
 
 		if (t_hact_ppi > t_hact_ipi)
 //ipi_tx_delay_qst = ((t_hact_ppi - t_hact_ipi) / t_ipi_clk + 20 * (t_ppi_clk / t_ipi_clk) + 4);
-//ipi_tx_delay_qst = ((t_hact_ppi - t_hact_ipi) * MM_CLK / 1000 + 20 *
-//(temp * MM_CLK / tx_data_rate / 1000) + 4);
-			ipi_tx_delay_qst = ((t_hact_ppi - t_hact_ipi) * MM_CLK +
-					20 * temp * MM_CLK / ap_tx_data_rate) / 1000 + 4;
+//ipi_tx_delay_qst = ((t_hact_ppi - t_hact_ipi) * mtk_mm_clk / 1000 + 20 *
+//(temp * mtk_mm_clk / tx_data_rate / 1000) + 4);
+			ipi_tx_delay_qst = ((t_hact_ppi - t_hact_ipi) * mtk_mm_clk +
+					20 * temp * mtk_mm_clk / ap_tx_data_rate) / 1000 + 4;
 		else
-		//ipi_tx_delay_qst =  (20 * (temp * MM_CLK / tx_data_rate / 1000) + 4);
-			ipi_tx_delay_qst =  20 * temp * MM_CLK /
+		//ipi_tx_delay_qst =  (20 * (temp * mtk_mm_clk / tx_data_rate / 1000) + 4);
+			ipi_tx_delay_qst =  20 * temp * mtk_mm_clk /
 				ap_tx_data_rate / 1000 + 4;
 
 		DISPINFO("ap_tx_data_rate=%d, temp=%d, t_ppi_clk=%d, t_ipi_clk=%d\n",
@@ -3474,7 +4532,8 @@ int mipi_dsi_rx_mac_init(enum DISP_BDG_ENUM module,
 		DISPINFO("t_hact_ppi=%d, t_hact_ipi=%d\n", t_hact_ppi, t_hact_ipi);
 
 		//t_ipi_tx_delay = ipi_tx_delay_qst_i * t_ipi_clk;
-		t_ipi_tx_delay = ipi_tx_delay_qst * 1000 / MM_CLK;
+		t_ipi_tx_delay = ipi_tx_delay_qst * 1000 / mtk_mm_clk;
+	/* Huaqin modify for K19S-31 by jiangyue at 2022/01/14 end */
 
 		DISPINFO("ipi_tx_delay_qst=%d, t_ipi_tx_delay=%d\n",
 			ipi_tx_delay_qst, t_ipi_tx_delay);
@@ -4673,6 +5732,11 @@ void bdg_first_init(void)
 	EFUSE = (struct BDG_EFUSE_REGS *)DISPSYS_BDG_EFUSE_BASE;
 	GPIO = (struct BDG_GPIO_REGS *)DISPSYS_BDG_GPIO_BASE;
 	TX_CMDQ_REG[0] = (struct DSI_TX_CMDQ_REGS *)(DISPSYS_BDG_TX_DSI0_BASE + 0xd00);
+  
+	/* Huaqin modify for HQ-135591 by caogaojie at 2021/05/15 start */
+	clk_buf_disp_ctrl(true);
+	mdelay(3);
+	/* Huaqin modify for HQ-135591 by caogaojie at 2021/05/15 end */
 
 	spislv_init();
 	spislv_switch_speed_hz(SPI_TX_LOW_SPEED_HZ, SPI_RX_LOW_SPEED_HZ);
@@ -4695,9 +5759,10 @@ int bdg_common_init(enum DISP_BDG_ENUM module,
 	struct LCM_DSI_PARAMS *tx_params;
 
 	DISPFUNCSTART();
-	clk_buf_disp_ctrl(true);
-	bdg_tx_pull_6382_reset_pin();
+ 	clk_buf_disp_ctrl(true);
 	mdelay(1);
+	bdg_tx_pull_6382_reset_pin();
+	mdelay(3);
 	spislv_init();
 	spislv_switch_speed_hz(SPI_TX_LOW_SPEED_HZ, SPI_RX_LOW_SPEED_HZ);
 
@@ -4799,8 +5864,6 @@ int bdg_common_init(enum DISP_BDG_ENUM module,
 
 	// request eint irq
 //	bdg_request_eint_irq();
-	if (bdg_mipi_hopping)
-		bdg_mipi_clk_change_for_resume(0, 1);
 
 	DISPFUNCEND();
 
@@ -4852,10 +5915,13 @@ int bdg_common_init_for_rx_pat(enum DISP_BDG_ENUM module,
 	EFUSE = (struct BDG_EFUSE_REGS *)DISPSYS_BDG_EFUSE_BASE;
 	GPIO = (struct BDG_GPIO_REGS *)DISPSYS_BDG_GPIO_BASE;
 	TX_CMDQ_REG[0] = (struct DSI_TX_CMDQ_REGS *)(DISPSYS_BDG_TX_DSI0_BASE + 0xd00);
-
-	bdg_tx_pull_6382_reset_pin();
-
+  
+	/* Huaqin modify for HQ-135591 by caogaojie at 2021/05/15 start */
 	clk_buf_disp_ctrl(true);
+	mdelay(5);
+	bdg_tx_pull_6382_reset_pin();
+	/* Huaqin modify for HQ-135591 by caogaojie at 2021/05/15 end */
+
 	set_LDO_on(cmdq);
 	set_mtcmos_on(cmdq);
 	ana_macro_on(cmdq);
@@ -4911,8 +5977,7 @@ int bdg_common_init_for_rx_pat(enum DISP_BDG_ENUM module,
 	// DSI-TX setting
 	bdg_tx_init(module, config, NULL);
 	/* panel init*/
-	if (pgc != NULL)
-		bdg_lcm_init(pgc->plcm, 1);
+	bdg_lcm_init(pgc->plcm, 1);
 	bdg_tx_set_mode(module, cmdq, tx_params->mode);
 
 	DSI_OUTREG32(cmdq, TX_REG[0]->DSI_RESYNC_CON, 0x50007);
@@ -5060,6 +6125,7 @@ static void bdg_eint_work_thread(struct work_struct *data)
 	}
 	// disable irq (can't use disable_irq() in ISR)
 	/* disable_irq_nosync(bdg_eint_irq); */
+
 }
 
 irqreturn_t bdg_eint_thread_handler(int irq, void *data)
@@ -5101,7 +6167,6 @@ void bdg_request_eint_irq(void)
 
 	// enable irq
 	INIT_WORK(&bdg_eint_work, bdg_eint_work_thread);
-
 	enable_irq(bdg_eint_irq);
 }
 
@@ -5188,14 +6253,12 @@ int bdg_mipi_clk_change(int msg, int en)
 	unsigned int dsi_hbp = 0; /* adaptive HBP value */
 
 	if (en) {
-		data_rate = 750;
+		data_rate = 749;
 		dsi_hbp = 0x20;
 	} else {
 		data_rate = 760;
 		dsi_hbp = 0x38;
 	}
-
-	bdg_mipi_hopping = en;
 
 	/* wait 6382 dsi revsync state */
 	polling_status();
@@ -5203,33 +6266,10 @@ int bdg_mipi_clk_change(int msg, int en)
 	/* change mipi clk & hbp porch params*/
 	bdg_dsi_mipi_clk_change(DISP_BDG_DSI0, NULL, data_rate);
 	bdg_dsi_porch_setting(DISP_BDG_DSI0, NULL, dsi_hbp);
-	bdg_tx_phy_config(DISP_BDG_DSI0, NULL, data_rate);
 
 	/* mipi clk setting need 28us */
 	udelay(28);
 
 	return 0;
 }
-
-int bdg_mipi_clk_change_for_resume(int msg, int en)
-{
-	unsigned int data_rate = 0;
-	unsigned int dsi_hbp = 0; /* adaptive HBP value */
-
-	if (en) {
-		data_rate = 750;
-		dsi_hbp = 0x20;
-	} else {
-		data_rate = 760;
-		dsi_hbp = 0x38;
-	}
-
-	/* change mipi clk & hbp porch params*/
-	bdg_dsi_mipi_clk_change(DISP_BDG_DSI0, NULL, data_rate);
-	bdg_dsi_porch_setting(DISP_BDG_DSI0, NULL, dsi_hbp);
-	bdg_tx_phy_config(DISP_BDG_DSI0, NULL, data_rate);
-
-	return 0;
-}
-
 

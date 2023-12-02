@@ -334,13 +334,10 @@ int primary_display_dsi_vfp_change(int state)
 	struct cmdqRecStruct *handle = NULL;
 	struct LCM_PARAMS *params;
 	unsigned int apply_vfp = 0;
-	ret = cmdqRecCreate(CMDQ_SCENARIO_DISP_ESD_CHECK, &handle);
-	if (ret) {
-		DISPERR("%s:%d, create cmdq handle fail!ret=%d\n",
-			__func__, __LINE__, ret);
-		return -1;
-	}
 
+	/* Huaqin modify for HQ-136147 by caogaojie at 2021/06/30 start */
+	cmdqRecCreate(CMDQ_SCENARIO_DISP_ESD_CHECK, &handle);
+	/* Huaqin modify for HQ-136147 by caogaojie at 2021/06/30 end */
 	cmdqRecReset(handle);
 
 	/* for chips later than M17,VFP can be set at anytime
@@ -376,8 +373,9 @@ int primary_display_dsi_vfp_change(int state)
 	}
 
 	if (state == 1 || state == 0) {
-		if (pgc != NULL && pgc->vfp_chg_sync_bdg
-				&& bdg_is_bdg_connected() == 1) {
+	/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 start */
+		if (pgc->vfp_chg_sync_bdg && bdg_is_bdg_connected() == 1) {
+	/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 end */
 			cmdqRecWait(handle, CMDQ_EVENT_MUTEX0_STREAM_EOF);
 
 			/* 2.stop dsi vdo mode */
@@ -393,17 +391,18 @@ int primary_display_dsi_vfp_change(int state)
 
 			ddp_mutex_set_sof_wait(dpmgr_path_get_mutex(primary_get_dpmgr_handle()),
 						handle, 0);
-
+	/* Huaqin modify for HQ-141739 by caogaojie at 2021/07/05 start */
 			cmdqRecFlush(handle);
+	/* Huaqin modify for HQ-141739 by caogaojie at 2021/07/05 end */
 		} else {
 			dpmgr_path_ioctl(primary_get_dpmgr_handle(), handle,
 						DDP_DSI_PORCH_CHANGE, &apply_vfp);
 		}
 	}
-
-	if (pgc != NULL && !pgc->vfp_chg_sync_bdg)
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 start */
+	if (!pgc->vfp_chg_sync_bdg)
 		cmdqRecFlushAsync(handle);
-
+/* Huaqin modify for HQ-179522 by jiangyue at 2022/01/24 end */
 	cmdqRecDestroy(handle);
 	return ret;
 }
@@ -750,29 +749,25 @@ void _primary_display_enable_mmsys_clk(void)
 		dpmgr_path_connect(primary_get_ovl2mem_handle(), CMDQ_DISABLE);
 
 	data_config = dpmgr_path_get_last_config(primary_get_dpmgr_handle());
-	if (data_config != NULL) {
-		data_config->dst_dirty = 1;
-		data_config->ovl_dirty = 1;
-		data_config->rdma_dirty = 1;
-		data_config->ovl_dirty = 1;
-		dpmgr_path_config(primary_get_dpmgr_handle(), data_config,
-			NULL);
-	}
+	data_config->dst_dirty = 1;
+	data_config->ovl_dirty = 1;
+	data_config->rdma_dirty = 1;
+	data_config->ovl_dirty = 1;
+	dpmgr_path_config(primary_get_dpmgr_handle(), data_config,
+		NULL);
+
 	if (primary_display_is_decouple_mode()) {
 		data_config =
 			dpmgr_path_get_last_config(primary_get_dpmgr_handle());
-		if (data_config != NULL) {
-			data_config->rdma_dirty = 1;
-			dpmgr_path_config(primary_get_dpmgr_handle(), data_config,
-				NULL);
-		}
+		data_config->rdma_dirty = 1;
+		dpmgr_path_config(primary_get_dpmgr_handle(), data_config,
+			NULL);
+
 		data_config = dpmgr_path_get_last_config(
-		primary_get_ovl2mem_handle());
-		if (data_config != NULL) {
-			data_config->dst_dirty = 1;
-			dpmgr_path_config(primary_get_ovl2mem_handle(), data_config,
-				NULL);
-		}
+			primary_get_ovl2mem_handle());
+		data_config->dst_dirty = 1;
+		dpmgr_path_config(primary_get_ovl2mem_handle(), data_config,
+			NULL);
 		dpmgr_path_ioctl(primary_get_ovl2mem_handle(), NULL,
 			DDP_OVL_GOLDEN_SETTING, &gset_arg);
 	} else {
@@ -818,8 +813,9 @@ void _vdo_mode_enter_idle(void)
 	unsigned int _vsyncFPS = 6000;/*real fps * 100*/
 	unsigned int _vfp_for_lp = 0;
 #endif
-
-	DISPINFO("[disp_lowpower]%s\n", __func__);
+/* Huaqin modify for HQ-145257 by caogaojie at 2021/07/07 start */
+	DISPMSG("[disp_lowpower]%s\n", __func__);
+/* Huaqin modify for HQ-145257 by caogaojie at 2021/07/07 end */
 #ifdef CONFIG_MTK_HIGH_FRAME_RATE
 	/*DynFPS SRT use fps not active timing fps*/
 	cur_cfg_id = primary_display_get_current_cfg_id();
@@ -1129,10 +1125,10 @@ int primary_display_request_dvfs_perf(
 			opp_level = HRT_OPP_LEVEL_LEVEL2;
 			break;
 		case HRT_LEVEL_DEFAULT:
-			opp_level = HRT_OPP_LEVEL_DEFAULT;
+			opp_level = HRT_OPP_LEVEL_LEVEL0;
 			break;
 		default:
-			opp_level = HRT_OPP_LEVEL_DEFAULT;
+			opp_level = HRT_OPP_LEVEL_LEVEL0;
 			break;
 		}
 #endif

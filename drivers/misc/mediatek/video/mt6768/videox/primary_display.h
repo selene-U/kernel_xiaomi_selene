@@ -286,8 +286,10 @@ struct display_primary_path_context {
 	unsigned int first_cfg;
 	/*DynFPS end*/
 #endif
+/* Huaqin add for HQ-179522 by jiangyue at 2022/01/24 start */
 	/* change vfp for ap dsi and 6382 at same time */
 	bool vfp_chg_sync_bdg;
+/* Huaqin add for HQ-179522 by jiangyue at 2022/01/24 end */
 };
 
 static inline char *lcm_power_state_to_string(enum lcm_power_state ps)
@@ -326,6 +328,7 @@ static inline char *power_mode_to_string(enum mtkfb_power_mode pm)
 
 typedef int (*PRIMARY_DISPLAY_CALLBACK) (unsigned int user_data);
 
+enum mtkfb_power_mode primary_display_get_power_mode_nolock(void);
 struct display_primary_path_context *_get_context(void);
 void _primary_path_lock(const char *caller);
 void _primary_path_unlock(const char *caller);
@@ -411,11 +414,6 @@ int primary_display_get_original_height(void);
 int primary_display_lcm_ATA(void);
 int primary_display_setbacklight(unsigned int level);
 int primary_display_setbacklight_nolock(unsigned int level);
-int primary_display_set_lcm_hbm(bool en);
-int primary_display_hbm_wait(bool en);
-int primary_display_setlcm_func_call(
-void (*func4)(void *, void *, void *, void *),
-void *data1, void *data2, void *data3, void *data4);
 int primary_display_pause(PRIMARY_DISPLAY_CALLBACK callback,
 	unsigned int user_data);
 int primary_display_switch_dst_mode(int mode);

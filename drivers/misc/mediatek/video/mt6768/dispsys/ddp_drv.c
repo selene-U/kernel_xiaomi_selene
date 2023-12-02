@@ -66,6 +66,7 @@
 #include "ddp_m4u.h"
 #include "display_recorder.h"
 #include "ddp_disp_bdg.h"
+
 /* #define DISP_NO_DPI */
 #ifndef DISP_NO_DPI
 #include "ddp_dpi_reg.h"
@@ -110,8 +111,7 @@ static int _disp_get_cmdq_slots(cmdqBackupSlotHandle Slot,
 	unsigned int slot_index, unsigned int *value)
 {
 	int ret;
-
-	ret = cmdqBackupReadSlot(Slot, slot_index, value);
+	ret = cmdqBackupReadSlotext(Slot, slot_index, value);
 
 	/* cmdq get slot fail */
 	if (ret)
@@ -424,9 +424,7 @@ static inline unsigned int virq_to_hwirq(unsigned int virq)
 }
 /* end for irq check */
 
-#ifdef CONFIG_MTK_MT6382_BDG
 extern void disp_init_bdg_gce_obj(void);
-#endif
 static int disp_probe_1(void)
 {
 	int ret = 0;
