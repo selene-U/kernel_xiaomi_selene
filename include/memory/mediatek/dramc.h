@@ -33,7 +33,6 @@ struct fmeter_dev_t {
 	struct reg_ctrl_t fbksel[2];
 	struct reg_ctrl_t dqsopen[2];
 	struct reg_ctrl_t dqopen[2];
-	struct reg_ctrl_t ckdiv4_ca[2];
 };
 
 struct mr4_dev_t {
@@ -67,8 +66,7 @@ enum DRAM_TYPE {
 	TYPE_PCDDR3,
 	TYPE_LPDDR4,
 	TYPE_LPDDR4X,
-	TYPE_LPDDR4P,
-	TYPE_LPDDR5
+	TYPE_LPDDR4P
 };
 
 #define DPM_IRQ_CHA	0
