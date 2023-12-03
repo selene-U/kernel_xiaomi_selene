@@ -1262,6 +1262,11 @@ config BUILD_ARM64_APPENDED_DTB_IMAGE_NAMES
 	  Space separated list of names of dtbs to append when
 	  building a concatenated Image.gz-dtb.
 
+config BUILD_XIAOMI_CAMERA_IMAGE_NAMES
+        string "To distinguish different project name"
+        help
+          For Camera to distinguish project names.
+
 endmenu
 
 menu "Userspace binary formats"
