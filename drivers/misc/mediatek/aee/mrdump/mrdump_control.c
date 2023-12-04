@@ -109,6 +109,8 @@ __init void mrdump_cblock_init(void)
 #if defined(CONFIG_ARM64)
 	machdesc_p->kimage_voffset = kimage_voffset;
 #endif
+	machdesc_p->kimage_sdata = (uintptr_t)_sdata;
+	machdesc_p->kimage_edata = (uintptr_t)_edata;
 
 	machdesc_p->vmalloc_start = (uint64_t)VMALLOC_START;
 	machdesc_p->vmalloc_end = (uint64_t)VMALLOC_END;
@@ -141,6 +143,5 @@ __init void mrdump_cblock_init(void)
 	pr_notice("%s: done.\n", __func__);
 
 end:
-	__flush_dcache_area(mrdump_cblock,
-			sizeof(struct mrdump_control_block));
+	__inner_flush_dcache_all();
 }
