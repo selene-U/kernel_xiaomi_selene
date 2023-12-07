@@ -313,6 +313,7 @@ struct dpmaif_drb_msg {
 	unsigned int    ipv4:1; /* enable ul checksum offload for ipv4 header */
 	unsigned int    l4:1; /* enable ul checksum offload for tcp/udp */
 	unsigned int    rsv:2;
+	unsigned int    reserved2:5;
 };
 
 struct dpmaif_drb_skb {

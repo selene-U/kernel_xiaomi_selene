@@ -38,7 +38,16 @@ ccci_port-y += port_proxy.o
 ccci_port-y += port_rpc.o
 ccci_port-y += port_smem.o
 ccci_port-y += port_sysmsg.o
-ccci_port-y += ccci_swtp.o
+ifeq ($(CONFIG_SWTP_DRIVER), y)
+ccci_port-y += ccci_swtp_merlin.o
+else
+  ifeq ($(CONFIG_SWTP_DRIVER_SELENE), y)
+  ccci_port-y += ccci_swtp_selene.o
+  else
+  ccci_port-y += ccci_swtp.o
+  endif
+endif
+
 else
 obj-  := dummy.o # avoid build error
 endif
