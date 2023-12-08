@@ -131,7 +131,7 @@ enum ACDK_CAMERA_OPERATION_MODE_ENUM {
  ************************************************************************/
 
 /*  */
-#define MAX_NUM_OF_SUPPORT_SENSOR 32
+#define MAX_NUM_OF_SUPPORT_SENSOR 16
 /*  */
 #define SENSOR_CLOCK_POLARITY_HIGH    0
 #define SENSOR_CLOCK_POLARITY_LOW 1
@@ -978,7 +978,7 @@ struct SINGLE_VC_INFO2 {
 	MUINT16 VC_SIZEH_BYTE;
 };
 
-#define MAX_VC_INFO_CNT			9
+#define MAX_VC_INFO_CNT			8
 
 struct SENSOR_VC_INFO2_STRUCT {
 	MUINT16 VC_Num;
@@ -1029,7 +1029,7 @@ struct SET_PD_BLOCK_INFO_T {
 	MUINT32 i4BlockNumY;
 	/* 1: 1st line is long exposure, 0: 1st line is short exposure*/
 	MUINT32 i4LeFirst;
-	MUINT32 i4Crop[20][2]; /* [scenario][crop] -> (xcrop, ycrop) */
+	MUINT32 i4Crop[10][2]; /* [scenario][crop] -> (xcrop, ycrop) */
 };
 
 enum IMGSENSOR_HDR_SUPPORT_TYPE_ENUM {
