@@ -568,7 +568,7 @@ static void fusb30x_shutdown(struct i2c_client *client)
 	}
 
 	core_enable_typec(&chip->port, false);
-	ret = DeviceWrite(((FSC_U8)(&chip->port.I2cAddr)), regControl3, length, &data);
+	ret = DeviceWrite(((FSC_U8)(chip->port.I2cAddr)), regControl3, length, &data);
 	if (ret != 0)
 		pr_err("send hardreset failed, ret = %d\n", ret);
 
@@ -582,7 +582,7 @@ static void fusb30x_shutdown(struct i2c_client *client)
 	/* Disable the pull-down on CC2 */
 	chip->port.Registers.Switches.PDWN2 = 0;
 	/* Commit the switch state */
-	DeviceWrite(((FSC_U8)(&chip->port.I2cAddr)), regSwitches0, 1,
+	DeviceWrite(((FSC_U8)(chip->port.I2cAddr)), regSwitches0, 1,
 		&chip->port.Registers.Switches.byte[0]);
 	fusb_GPIO_Cleanup();
 	/* keep the cc open status 20ms */

@@ -111,7 +111,7 @@ static int _disp_get_cmdq_slots(cmdqBackupSlotHandle Slot,
 	unsigned int slot_index, unsigned int *value)
 {
 	int ret;
-	ret = cmdqBackupReadSlotext(Slot, slot_index, value);
+	ret = cmdqBackupReadSlot(Slot, slot_index, value);
 
 	/* cmdq get slot fail */
 	if (ret)

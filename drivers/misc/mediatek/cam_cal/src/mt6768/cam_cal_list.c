@@ -96,9 +96,6 @@ struct stCAM_CAL_LIST_STRUCT g_camCalList[] = {
 	{IMX386_MONO_SENSOR_ID, 0xA0, Common_read_region},
 	/*B+B. No Cal data for main2 OV8856*/
 	{S5K2P7_SENSOR_ID, 0xA0, Common_read_region},
-#ifdef SUPPORT_S5K4H7
-	{S5K4H7_SENSOR_ID, 0xA0, zte_s5k4h7_read_region},
-	{S5K4H7SUB_SENSOR_ID, 0xA0, zte_s5k4h7_sub_read_region},
 #ifdef CONFIG_TARGET_PRODUCT_MERLINCOMMON
 	{S5KGM1SP_SENSOR_ID, 0xA0, Common_read_region},
 	{S5KGM1SP_SUNNY_SENSOR_ID, 0xA0, Common_read_region},

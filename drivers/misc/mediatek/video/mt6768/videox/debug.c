@@ -576,7 +576,7 @@ static int __maybe_unused compare_dsi_checksum(unsigned long unused)
 		return 0;
 
 	pr_err("called from compare_dsi_checksum\n");
-	ret = cmdqBackupReadSlotext(cksum_slot, 0, &cksum);
+	ret = cmdqBackupReadSlot(cksum_slot, 0, &cksum);
 	if (ret) {
 		DISPERR("Fail to read cksum from cmdq slot\n");
 		return -1;
