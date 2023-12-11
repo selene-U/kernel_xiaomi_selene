@@ -7,6 +7,7 @@
  * files. As such this file MUST only contain comments and defines.
  *
  * Copyright (c) 1999-2002 Vojtech Pavlik
+ * Copyright (C) 2021 XiaoMi, Inc.
  * Copyright (c) 2015 Hans de Goede <hdegoede@redhat.com>
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -338,12 +339,14 @@
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
-/* Huaqin modify for HQ-123513 by liunianliang at 2021/04/25 start */
 #define KEY_TABLE0		249
 #define KEY_TABLE1		250
-/* Huaqin modify for HQ-123513 by liunianliang at 2021/04/25 end */
-#define KEY_NONE		        251
+#define KEY_NONE		251
 
+#define KEY_ANT_CONNECT         0x292	/* key for sar ant check */
+#define KEY_ANT_UNCONNECT       0x293	/* key for sar ant check */
+#define DIV_ANT_CONNECT         0X294 	/* key for sar ant div check*/
+#define DIV_ANT_UNCONNECT       0X295 	/* key for sar ant div check*/
 
 /* Code 255 is reserved for special needs of AT keyboard driver */
 

@@ -2,6 +2,7 @@
  * linux/sound/cs35l41.h -- Platform data for CS35L41
  *
  * Copyright (c) 2018 Cirrus Logic Inc.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -72,6 +73,8 @@ struct cs35l41_private {
 	bool force_int;
 	/* GPIO for /RST */
 	struct gpio_desc *reset_gpio;
+	/* GPIO for int*/
+	struct gpio_desc *irq_gpio;
 	//int reset_gpio;
 	/* Run-time mixer */
 	unsigned int fast_switch_file_idx;
